@@ -1,0 +1,37 @@
+.activity-panel { margin: 24px 0; padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.activity-panel h2 { font-size: 20px; margin: 0 0 12px; }
+.activity-panel button, .activity-panel input, .activity-panel select { font: inherit; color: var(--text); background: var(--soft); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; }
+.activity-panel button { cursor: pointer; }
+.activity-panel button:disabled { opacity: .5; cursor: not-allowed; }
+.access-controls { display: flex; gap: 10px; margin-top: 8px; }
+#api-key { flex: 1; min-width: 0; max-width: 520px; }
+.activity-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.activity-toolbar input { accent-color: var(--accent); }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; text-align: left; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 14px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+td { overflow-wrap: anywhere; min-width: 90px; max-width: 320px; }
+.identifier { font-family: ui-monospace, monospace; font-size: 12px; display: block; min-width: 180px; }
+.event-identifier { color: var(--muted); margin-top: 6px; }
+.status-badge { display: inline-block; border: 1px solid var(--border); padding: 3px 8px; border-radius: 6px; white-space: nowrap; font-size: 12px; }
+.status-succeeded { color: var(--accent); }
+.status-failed { color: #b42338; }
+[data-theme="dark"] .status-failed { color: #ff9aab; }
+.pagination { display: flex; justify-content: flex-end; align-items: center; gap: 16px; margin-top: 20px; }
+#activity-message { color: var(--muted); overflow-wrap: anywhere; }
+#activity-message[role="alert"] { color: #b42338; }
+[data-theme="dark"] #activity-message[role="alert"] { color: #ff9aab; }
+dl { display: grid; grid-template-columns: minmax(100px, 160px) 1fr; gap: 8px 16px; font-size: 13px; }
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; }
+[hidden] { display: none !important; }
+@media (max-width: 1240px) { .page-tabs { margin: 0 24px; } }
+@media (max-width: 640px) {
+  .page-tabs { margin: 0 16px; font-size: 13px; }
+  .activity-panel { padding: 16px; }
+  .access-controls { flex-wrap: wrap; }
+  #api-key { flex-basis: 100%; }
+  dl { grid-template-columns: 1fr; gap: 4px; }
+  dd { margin-bottom: 8px; }
+}

@@ -1,6 +1,14 @@
 from celery import Celery
+from celery.signals import setup_logging
 
 from backend.app.config import get_settings
+from backend.app.logging_config import configure_logging
+
+
+@setup_logging.connect
+def setup_worker_logging(**_kwargs: object) -> None:
+    configure_logging()
+
 
 settings = get_settings()
 

@@ -110,6 +110,20 @@ def create_app() -> FastAPI:
     def explorer() -> FileResponse:
         return FileResponse(assets / "explorer.html")
 
+    @app.get("/activity", include_in_schema=False)
+    def activity_dashboard() -> FileResponse:
+        return FileResponse(
+            assets / "activity.html",
+            headers={
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+                "Content-Security-Policy": (
+                    "default-src 'self'; frame-ancestors 'none'; "
+                    "base-uri 'none'; form-action 'self'"
+                ),
+            },
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
         _request: Request, exc: RequestValidationError

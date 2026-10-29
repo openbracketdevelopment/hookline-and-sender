@@ -124,7 +124,9 @@ def list_deliveries(
     offset: Annotated[int, Query(ge=0)] = 0,
     delivery_status: Annotated[DeliveryStatus | None, Query(alias="status")] = None,
 ) -> DeliveryPage:
-    statement = select(Delivery).order_by(Delivery.created_at.desc())
+    statement = select(Delivery).order_by(
+        Delivery.created_at.desc(), Delivery.id.desc()
+    )
     if delivery_status is not None:
         statement = statement.where(Delivery.status == delivery_status)
     items = session.scalars(statement.limit(limit).offset(offset)).all()

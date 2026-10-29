@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from backend.app.config import get_settings
 from backend.app.database import SessionLocal
+from backend.app.logging_config import log_after_commit
 from backend.app.models import Delivery, DeliveryAttempt
 from backend.app.security import sign_request
 
@@ -67,6 +68,15 @@ def claim_delivery(delivery_id: str) -> DeliveryClaim | None:
                 )
                 previous.outcome = "worker_lost"
                 previous.error_detail = "Worker lease expired before completion"
+                log_after_commit(
+                    session,
+                    "delivery worker lease expired",
+                    event_id=delivery.event_id,
+                    delivery_id=delivery.id,
+                    attempt_number=previous.attempt_number,
+                    outcome="worker_lost",
+                    error_detail=previous.error_detail,
+                )
             if delivery.attempt_count >= settings.max_attempts:
                 delivery.status = "failed"
                 delivery.last_error = "Worker lease expired at attempt limit"
@@ -74,14 +84,13 @@ def claim_delivery(delivery_id: str) -> DeliveryClaim | None:
                 delivery.lease_expires_at = None
                 delivery.claim_token = None
                 delivery.updated_at = now
-                logger.warning(
+                log_after_commit(
+                    session,
                     "delivery failed after worker lease expired",
-                    extra={
-                        "event_id": delivery.event_id,
-                        "delivery_id": delivery.id,
-                        "attempt_number": delivery.attempt_count,
-                        "status": delivery.status,
-                    },
+                    event_id=delivery.event_id,
+                    delivery_id=delivery.id,
+                    attempt_number=delivery.attempt_count,
+                    status=delivery.status,
                 )
                 return None
             delivery.status = "retry_scheduled"
@@ -100,6 +109,14 @@ def claim_delivery(delivery_id: str) -> DeliveryClaim | None:
             delivery.status = "failed"
             delivery.next_attempt_at = None
             delivery.updated_at = now
+            log_after_commit(
+                session,
+                "delivery attempt limit reached",
+                event_id=delivery.event_id,
+                delivery_id=delivery.id,
+                attempt_number=delivery.attempt_count,
+                status="failed",
+            )
             return None
 
         number = delivery.attempt_count + 1
@@ -129,6 +146,14 @@ def claim_delivery(delivery_id: str) -> DeliveryClaim | None:
             claim_token=token,
             request_body=delivery.request_body.encode("utf-8"),
             request_deadline=request_deadline,
+        )
+        log_after_commit(
+            session,
+            "delivery attempt started",
+            event_id=delivery.event_id,
+            delivery_id=delivery.id,
+            attempt_number=number,
+            status="in_progress",
         )
     return claim
 
@@ -270,15 +295,17 @@ def _complete(
             delivery.next_attempt_at = None
             delivery.last_error = error_detail[:256] if error_detail else outcome
 
-        logger.info(
+        log_after_commit(
+            session,
             "delivery attempt completed",
-            extra={
-                "event_id": delivery.event_id,
-                "delivery_id": delivery.id,
-                "attempt_number": claim.attempt_number,
-                "status": delivery.status,
-                "outcome": outcome,
-            },
+            event_id=delivery.event_id,
+            delivery_id=delivery.id,
+            attempt_number=claim.attempt_number,
+            status=delivery.status,
+            outcome=outcome,
+            http_status=http_status,
+            duration_ms=duration_ms,
+            error_detail=attempt.error_detail,
         )
 
 

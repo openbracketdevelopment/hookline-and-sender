@@ -47,6 +47,9 @@ main { max-width: 1160px; margin: auto; padding: 54px 0 32px; }
 .section-heading a { font-size: 12px; text-decoration: none; }
 .api-note { font-size: 12px; color: var(--muted); }
 footer { color: var(--muted); text-align: center; padding: 12px 24px 36px; font-size: 12px; }
+.page-tabs { max-width: 1160px; margin: auto; display: flex; gap: 24px; padding: 18px 24px 0; }
+.page-tabs a { text-decoration: none; color: var(--muted); padding: 8px 0; border-bottom: 2px solid transparent; }
+.page-tabs a[aria-current="page"] { color: var(--accent); border-color: var(--accent); font-weight: 650; }
 .swagger-ui { color: var(--text); }
 .swagger-ui .wrapper { padding: 0; }
 .swagger-ui .info { display: none; }

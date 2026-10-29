@@ -15,8 +15,8 @@ The relay saves each message before confirming receipt. Outgoing messages are
 signed so the receiving application can verify their origin and integrity.
 
 **Current scope:** a local learning and portfolio project with one configured
-demo receiver. CMS integrations, multiple destinations, and a delivery dashboard
-are not included yet. It is not production-ready.
+demo receiver and an activity dashboard. CMS integrations and multiple
+destinations are not included yet. It is not production-ready.
 
 ## Requirements
 
@@ -167,6 +167,41 @@ already reached the receiver.
 The explorer supports light and dark themes and remembers your choice.
 Authorization is cleared on reload. Its Swagger UI assets load from a CDN,
 so the explorer requires internet access.
+
+## View webhook activity
+
+Open **[localhost:8000/activity](http://localhost:8000/activity)**, or select
+**Webhook activity** beside the API explorer tab.
+
+1. Paste your `API_KEY` from `.env` and click **Connect**.
+2. Filter deliveries by status or browse older pages.
+3. Click **View** to see a delivery's attempts, HTTP responses, and errors.
+
+Activity refreshes every 10 seconds while the page is visible. Your key stays
+in memory only; reloading or clicking **Disconnect** clears it. The dashboard
+shows accepted deliveries from PostgreSQL, including history from before this
+dashboard was added. It does not show message payloads or rejected API requests.
+
+### Activity log files
+
+Docker saves new acceptance and delivery activity as JSON lines in
+`logs/webhooks.jsonl`. Each line includes a timestamp, event and delivery IDs,
+and relevant status, attempt number, HTTP status, duration, and sanitized error.
+Payloads, API keys, and signing secrets are excluded.
+
+```sh
+tail -f logs/webhooks.jsonl
+```
+
+Logs rotate at 5 MiB, retaining five backup files. They survive container
+restarts and are ignored by Git. Older database history is not copied into
+these files. PostgreSQL remains the source of truth: file logs are a bounded
+operational aid, not a complete audit archive. File-write failures are reported
+in service logs without discarding committed webhook records.
+
+File logging uses macOS/Linux file locks to coordinate the API and worker
+processes. Compose configures it automatically; when running Python directly,
+set `ACTIVITY_LOG_DIR` to a private, writable directory to enable it.
 
 ## Everyday commands
 

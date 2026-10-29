@@ -1,5 +1,4 @@
 import json
-import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -8,10 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.app.logging_config import log_after_commit
 from backend.app.models import Delivery, Event
 from backend.app.schemas import EventCreate
-
-logger = logging.getLogger(__name__)
 
 
 def _canonical_json(value: object) -> str:
@@ -93,6 +91,14 @@ def accept_event(session: Session, body: EventCreate) -> tuple[Event, Delivery]:
         updated_at=accepted_at,
     )
     session.add_all([event, delivery])
+    log_after_commit(
+        session,
+        "event accepted",
+        event_id=event_id,
+        delivery_id=delivery_id,
+        status="pending",
+        attempt_number=0,
+    )
     try:
         session.commit()
     except IntegrityError:
@@ -110,8 +116,4 @@ def accept_event(session: Session, body: EventCreate) -> tuple[Event, Delivery]:
 
     session.refresh(event)
     session.refresh(delivery)
-    logger.info(
-        "event accepted",
-        extra={"event_id": event.id, "delivery_id": delivery.id},
-    )
     return event, delivery

@@ -89,6 +89,23 @@ Its shell, styles, and theme logic are local assets; the pinned Swagger bundle
 and stylesheet come from jsDelivr. Theme preference is stored in the browser,
 but authorization is not persisted. External schema validation is disabled.
 
+`/activity` serves a local activity dashboard using the existing authenticated
+delivery list and detail endpoints. It supports status filters, pagination, and
+attempt history, refreshing every ten seconds while visible. Its API key is
+held only in JavaScript memory and cleared on disconnect or reload. The
+dashboard loads no CDN assets and displays no event payloads.
+
+Committed acceptance, attempt-start, attempt-result, and expired-lease events
+are emitted to the `hookline.activity` logger after database commit. With
+`ACTIVITY_LOG_DIR` set, this logger also writes JSON lines to `webhooks.jsonl`.
+Compose mounts the host's `logs/` directory into the API, worker, and dispatcher.
+Rotation retains five 5 MiB backups; an OS file lock serializes writes and
+rotation across processes on macOS/Linux. Only allowlisted context is recorded,
+not bodies, credentials, signatures, or raw exception messages. File errors are
+reported on stderr. These files are best-effort operational logs: a crash
+between database commit and logging can omit a line, and rotation removes old
+entries. PostgreSQL remains authoritative for dashboard history.
+
 - `GET /health/live`: process liveness.
 - `GET /health/ready`: checks the delivery table is queryable and Redis responds.
 - `POST /api/v1/events`: bearer-authenticated ingestion.
@@ -159,5 +176,5 @@ its demo state and restores immediate success. The development-only reset
 endpoint can opt into two simulated failures; `scripts.run_demo
 --simulate-retries` enables this mode for retry demonstrations. There is one
 configured destination and a single operator API
-key. There is no dashboard, CMS integration, account isolation, manual replay,
+key. There is no CMS integration, account isolation, manual replay,
 fan-out, ordering guarantee, cloud deployment, or production-readiness claim.

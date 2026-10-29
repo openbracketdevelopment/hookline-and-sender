@@ -1,5 +1,6 @@
 x-app-environment: &app-environment
   APP_ENV: ${APP_ENV:-development}
+  ACTIVITY_LOG_DIR: /app/logs
   API_KEY: ${API_KEY:?Set API_KEY in .env}
   DEMO_SIGNING_SECRET: ${DEMO_SIGNING_SECRET:?Set DEMO_SIGNING_SECRET in .env}
   DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
@@ -43,6 +44,8 @@ services:
 
   api:
     build: .
+    volumes:
+      - ./logs:/app/logs
     environment: *app-environment
     command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -64,6 +67,8 @@ services:
 
   worker:
     build: .
+    volumes:
+      - ./logs:/app/logs
     environment: *app-environment
     command:
       [
@@ -82,6 +87,8 @@ services:
 
   dispatcher:
     build: .
+    volumes:
+      - ./logs:/app/logs
     environment: *app-environment
     command: ["python", "-m", "backend.app.workers.dispatcher"]
     depends_on:

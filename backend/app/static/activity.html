@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Hook, Line &amp; Sender | Webhook Activity</title>
+    <link rel="stylesheet" href="/explorer-assets/explorer.css">
+    <link rel="stylesheet" href="/explorer-assets/activity.css">
+    <script defer src="/explorer-assets/theme.js"></script>
+    <script defer src="/explorer-assets/activity.js"></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="brand" href="/activity">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <span>Hook, Line &amp; Sender</span>
+      </a>
+      <div class="header-actions">
+        <button id="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false">Dark mode</button>
+      </div>
+    </header>
+    <nav class="page-tabs" aria-label="Main navigation">
+      <a href="/docs">API explorer</a>
+      <a href="/activity" aria-current="page">Webhook activity</a>
+    </nav>
+    <main>
+      <section class="intro">
+        <p class="eyebrow">DELIVERY HISTORY</p>
+        <h1>Webhook activity</h1>
+        <p class="description">See which webhooks succeeded, which are waiting, and what happened on each attempt. History comes from the database, not the log files.</p>
+      </section>
+      <section class="activity-panel" aria-labelledby="access-title">
+        <h2 id="access-title">Connect to your relay</h2>
+        <form id="access-form">
+          <label for="api-key">API key</label>
+          <div class="access-controls">
+            <input id="api-key" type="password" autocomplete="off" spellcheck="false" required placeholder="Paste API_KEY from your .env">
+            <button type="submit">Connect</button>
+            <button id="disconnect" type="button" hidden>Disconnect</button>
+          </div>
+        </form>
+        <p class="api-note">Your key stays in memory only. Reloading or disconnecting clears access. No webhook payloads are displayed.</p>
+      </section>
+      <p id="activity-message" role="status" aria-live="polite">Enter your API key to view activity.</p>
+      <section id="activity-content" class="activity-panel" aria-labelledby="deliveries-title" hidden>
+        <div class="section-heading">
+          <h2 id="deliveries-title">Deliveries</h2>
+          <button id="refresh" type="button">Refresh</button>
+        </div>
+        <div class="activity-toolbar">
+          <label for="status-filter">Status</label>
+          <select id="status-filter">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="in_progress">In progress</option>
+            <option value="retry_scheduled">Retry scheduled</option>
+            <option value="succeeded">Succeeded</option>
+            <option value="failed">Failed</option>
+          </select>
+          <label><input id="auto-refresh" type="checkbox" checked> Refresh every 10 seconds</label>
+        </div>
+        <p id="page-summary" class="api-note"></p>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Delivery history">
+          <table>
+            <thead><tr><th scope="col">Delivery / event</th><th scope="col">Destination</th><th scope="col">Status</th><th scope="col">Attempts</th><th scope="col">Created</th><th scope="col">Details</th></tr></thead>
+            <tbody id="delivery-rows"></tbody>
+          </table>
+        </div>
+        <p id="empty-state" hidden>No deliveries match this filter.</p>
+        <div class="pagination">
+          <button id="previous" type="button">Previous</button>
+          <span id="page-number"></span>
+          <button id="next" type="button">Next</button>
+        </div>
+      </section>
+      <section id="delivery-details" class="activity-panel" aria-labelledby="details-title" hidden>
+        <div class="section-heading">
+          <h2 id="details-title" tabindex="-1">Delivery details</h2>
+          <button id="close-details" type="button">Close details</button>
+        </div>
+        <dl id="detail-summary"></dl>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Delivery attempts">
+          <table>
+            <thead><tr><th scope="col">Attempt</th><th scope="col">Started</th><th scope="col">Outcome</th><th scope="col">HTTP</th><th scope="col">Duration</th><th scope="col">Error</th></tr></thead>
+            <tbody id="attempt-rows"></tbody>
+          </table>
+        </div>
+        <p id="no-attempts" hidden>No attempts yet. This delivery is waiting for a worker.</p>
+      </section>
+      <noscript>JavaScript is required to load webhook activity. You can also use the authenticated delivery API.</noscript>
+    </main>
+    <footer>Local relay activity. Receivers must handle duplicate delivery IDs safely.</footer>
+  </body>
+</html>

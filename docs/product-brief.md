@@ -22,10 +22,11 @@ succeeds to demonstrate retries.
   worker through Redis.
 - Sign each outgoing request with HMAC-SHA256.
 - Expose authenticated event, delivery, and attempt-history reads.
+- Provide a local activity dashboard and rotating, payload-free activity logs.
 - Demonstrate two retryable receiver failures followed by successful processing.
 - Include migrations, tests, Compose-based local setup, and GitHub Actions checks.
 
-Not included: a dashboard, CMS integrations, public destination management,
+Not included: CMS integrations, public destination management,
 accounts, teams, billing, multitenancy, Kubernetes, cloud infrastructure,
 Terraform, AI features, event fan-out, guaranteed ordering, or manual replay.
 
@@ -87,9 +88,8 @@ Local HTTP is allowed only for the explicitly enabled demo destination.
 - **Milestone 2:** Payload CMS producer and Next.js App Router receiver examples,
   with signed verification, stable IDs, draft/published and transaction-boundary
   handling, and explicit relay-acceptance failure behavior.
-- **Milestone 3:** Next.js delivery-history dashboard with filters, attempt
-  details, and controlled manual replay; administrative credentials stay
-  server-side.
+- **Milestone 3:** Extend the local activity dashboard with a Next.js interface
+  and controlled manual replay; administrative credentials stay server-side.
 - **Milestone 4:** Craft CMS integration example and further operational and
   security work before any public hosting.
 

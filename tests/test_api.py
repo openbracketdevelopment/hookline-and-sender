@@ -43,7 +43,32 @@ def test_explorer_serves_local_shell_and_theme_assets(client):
     script = client.get("/explorer-assets/explorer.js").text
     assert "persistAuthorization: false" in script
     assert "validatorUrl: null" in script
-    assert "hookline-theme" in script
+    assert "hookline-theme" in client.get("/explorer-assets/theme.js").text
+
+
+def test_activity_dashboard_shell_and_authenticated_history(client):
+    page = client.get("/activity")
+    assert page.status_code == 200
+    assert 'id="delivery-rows"' in page.text
+    assert 'href="/docs"' in page.text
+    assert page.headers["cache-control"] == "no-store"
+    assert "default-src 'self'" in page.headers["content-security-policy"]
+    assert client.get("/explorer-assets/activity.js").status_code == 200
+    assert client.get("/explorer-assets/activity.css").status_code == 200
+    assert 'href="/activity"' in client.get("/docs").text
+    delivery_id = client.post("/api/v1/events", headers=AUTH, json=EVENT).json()[
+        "delivery_id"
+    ]
+    assert client.get(f"/api/v1/deliveries/{delivery_id}").status_code == 401
+    page = client.get(
+        "/api/v1/deliveries?status=pending&limit=26&offset=0", headers=AUTH
+    ).json()
+    assert page["items"][0]["id"] == delivery_id
+    assert "data" not in page["items"][0]
+    assert (
+        client.get("/api/v1/deliveries?status=succeeded", headers=AUTH).json()["items"]
+        == []
+    )
 
 
 def test_ready_checks_schema_and_bounded_redis_ping(
