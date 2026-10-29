@@ -27,6 +27,12 @@ driver. FastAPI performs short database operations; it does not hold a
 transaction while making HTTP requests. Celery runs a separate synchronous
 worker. The dispatcher is a separate process in Compose.
 
+Only the outgoing HTTP operation uses an asynchronous HTTPX client, run within
+the synchronous worker using `asyncio.run`. Python's `asyncio.timeout` cancels
+the whole operation at a single deadline. This avoids treating HTTPX's separate
+per-operation inactivity limits as an overall deadline; database access stays
+synchronous.
+
 ## Data model
 
 - **Event:** UUID, producer source and stable source event ID, event type,
@@ -52,9 +58,24 @@ A worker claims a due delivery under a row lock using `SELECT ... FOR UPDATE`
 and creates its attempt record before committing. An active lease or terminal
 status makes duplicate/stale tasks no-ops. The worker performs the network call
 outside the transaction, then atomically records its outcome and advances the
-delivery state. A lease expires after the configured request timeout plus a
-recovery margin. The next claim marks a stranded attempt as `worker_lost` and
-either makes it due again or fails it if the five-attempt limit was reached.
+delivery state. The clock is read after acquiring the lock. A lease expires
+after the configured overall request budget plus a recovery margin, rounded up.
+The monotonic request deadline starts at claim time; committing the claim
+consumes part of that budget. An already expired budget prevents opening the
+HTTP client. Cancellation cannot guarantee immediate cleanup of operating-system
+stalls or process pauses. The HTTP
+client consumes no response body: only response status and headers are needed.
+The next claim marks a stranded attempt as `worker_lost` and either makes it due
+again or fails it if the five-attempt limit was reached. Claim tokens fence
+late completions from a previous worker out of a replacement attempt.
+
+PostgreSQL connect/pool, statement, and lock waits are limited by
+`DEPENDENCY_TIMEOUT_SECONDS` (default 3). Redis connection/read waits use the
+same setting. These are individual operation limits, not an overall readiness
+deadline. Publish retries are disabled inside Celery's publisher; the dispatcher
+logs a broker failure, stops that batch, and tries persisted work on its next
+scan. Concurrent dispatcher scans may still publish duplicate IDs; atomic
+worker claims remain the final coordination mechanism.
 
 A receiver can have performed a side effect before a process crash or lost
 response. Retrying may therefore repeat delivery; receivers should deduplicate
@@ -63,8 +84,13 @@ guaranteed eventually to succeed.
 
 ## API and authentication
 
+`/docs` serves a custom light/dark API explorer around Swagger UI 5.34.0.
+Its shell, styles, and theme logic are local assets; the pinned Swagger bundle
+and stylesheet come from jsDelivr. Theme preference is stored in the browser,
+but authorization is not persisted. External schema validation is disabled.
+
 - `GET /health/live`: process liveness.
-- `GET /health/ready`: PostgreSQL and Redis dependency check.
+- `GET /health/ready`: checks the delivery table is queryable and Redis responds.
 - `POST /api/v1/events`: bearer-authenticated ingestion.
 - `GET /api/v1/events/{event_id}`: authenticated event and delivery details.
 - `GET /api/v1/deliveries`: authenticated, paginated/filterable list.
@@ -74,6 +100,9 @@ guaranteed eventually to succeed.
 The one incoming API key is configured by the operator. It is separate from the
 demo destination signing secret. Business endpoints all require bearer auth.
 An ASGI body limiter enforces a 256 KiB limit even without `Content-Length`.
+Startup rejects invalid or non-finite timing and size configuration. The
+milestone's request-size, attempt-count, and signature-tolerance maxima cannot
+be raised through environment settings.
 
 The event request's validated fields are normalized for idempotency comparison;
 whitespace and JSON object key order do not affect equivalence. The outbound
@@ -126,6 +155,9 @@ targets Python 3.12 rather than the system's older Python runtime.
 ## Limitations
 
 The demo receiver keeps counters in process memory, so a receiver restart resets
-its demo state. There is one configured destination and a single operator API
+its demo state and restores immediate success. The development-only reset
+endpoint can opt into two simulated failures; `scripts.run_demo
+--simulate-retries` enables this mode for retry demonstrations. There is one
+configured destination and a single operator API
 key. There is no dashboard, CMS integration, account isolation, manual replay,
 fan-out, ordering guarantee, cloud deployment, or production-readiness claim.

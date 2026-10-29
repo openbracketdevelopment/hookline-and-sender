@@ -10,7 +10,8 @@ retries.
 
 This is a portfolio and learning project, not a production-readiness or
 performance claim. Its first destination is a local receiver that intentionally
-fails twice and then succeeds.
+succeeds immediately by default, with an opt-in mode that fails twice and then
+succeeds to demonstrate retries.
 
 ## Milestone 1 scope
 
@@ -70,7 +71,8 @@ Event ordering and guaranteed eventual success are not promised.
 - A new developer can follow the README to start and migrate the local stack.
 - Authenticated events persist even when Redis is unavailable.
 - A separate worker delivers the event and keeps chronological attempt records.
-- The demo receiver fails twice, then succeeds; all attempts are visible by API.
+- The default demo succeeds immediately. With `--simulate-retries`, the receiver
+  fails twice, then succeeds; all attempts are visible by API.
 - Repeating an equivalent submission does not create another delivery.
 - Tests cover authentication, validation, size limits, conflict handling,
   delivery policy, signatures, retry limits, duplicate tasks, lease recovery,

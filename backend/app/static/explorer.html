@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Hook, Line &amp; Sender | API Explorer</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.34.0/swagger-ui.css">
+    <link rel="stylesheet" href="/explorer-assets/explorer.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.34.0/swagger-ui-bundle.js"></script>
+    <script defer src="/explorer-assets/explorer.js"></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="brand" href="/docs" aria-label="Hook, Line and Sender API explorer">
+        <span class="brand-mark" aria-hidden="true">H<span>↗</span></span>
+        <span>Hook, Line &amp; Sender</span>
+      </a>
+      <div class="header-actions">
+        <span class="version">API v1</span>
+        <button id="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false">Dark mode</button>
+      </div>
+    </header>
+    <main>
+      <section class="intro" aria-labelledby="explorer-title">
+        <p class="eyebrow">YOUR WEBHOOK DELIVERY TOOLKIT</p>
+        <h1 id="explorer-title">Send with confidence.<br><span>Follow every delivery.</span></h1>
+        <p class="description">Hook, Line &amp; Sender saves incoming events, delivers signed webhooks to a configured app, and retries temporary failures. Explore the API below to send an event and inspect its delivery history.</p>
+        <div class="steps" aria-label="How it works">
+          <div><span class="step-number">01</span><strong>Authenticate</strong><p>Use Authorize below with your API key.</p></div>
+          <div><span class="step-number">02</span><strong>Send an event</strong><p>POST an event. A 202 means it is saved.</p></div>
+          <div><span class="step-number">03</span><strong>Track delivery</strong><p>GET its delivery ID to view every attempt.</p></div>
+        </div>
+      </section>
+      <section class="api-section" aria-labelledby="endpoints-title">
+        <div class="section-heading"><h2 id="endpoints-title">API explorer</h2><a href="/openapi.json">OpenAPI schema <span aria-hidden="true">↗</span></a></div>
+        <p class="api-note">Local demo &middot; One configured destination &middot; CMS adapters are not connected yet. Receivers must handle duplicate delivery IDs safely.</p>
+        <p id="explorer-status" role="status">Loading interactive API explorer…</p>
+        <div id="swagger-ui"></div>
+      </section>
+    </main>
+    <footer>Built for reliable handoffs. Delivery is not exactly-once or guaranteed.</footer>
+  </body>
+</html>

@@ -1,7 +1,8 @@
 from functools import lru_cache
+from math import ceil
 from urllib.parse import urlparse
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +11,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        allow_inf_nan=False,
     )
 
     app_env: str = "development"
@@ -19,24 +21,21 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     demo_receiver_url: str = "https://demo.invalid/webhooks"
     allow_insecure_demo_http: bool = False
-    max_request_bytes: int = 256 * 1024
-    request_timeout_seconds: float = 3.0
-    lease_margin_seconds: int = 10
-    dispatcher_interval_seconds: float = 2.0
-    dispatch_cooldown_seconds: int = 5
-    max_attempts: int = 5
-    retry_base_seconds: float = 1.0
-    retry_max_seconds: float = 30.0
-    signature_tolerance_seconds: int = 300
+    max_request_bytes: int = Field(default=256 * 1024, gt=0, le=256 * 1024)
+    request_timeout_seconds: float = Field(default=3.0, gt=0, le=300)
+    lease_margin_seconds: int = Field(default=10, ge=1, le=300)
+    dependency_timeout_seconds: int = Field(default=3, ge=2, le=30)
+    dispatcher_interval_seconds: float = Field(default=2.0, gt=0, le=300)
+    dispatch_cooldown_seconds: int = Field(default=5, ge=1, le=300)
+    max_attempts: int = Field(default=5, ge=1, le=5)
+    retry_base_seconds: float = Field(default=1.0, gt=0, le=86400)
+    retry_max_seconds: float = Field(default=30.0, gt=0, le=86400)
+    signature_tolerance_seconds: int = Field(default=300, ge=1, le=300)
 
     @model_validator(mode="after")
     def validate_settings(self) -> "Settings":
-        if self.max_attempts < 1:
-            raise ValueError("MAX_ATTEMPTS must be at least one")
-        if self.request_timeout_seconds <= 0 or self.lease_margin_seconds < 1:
-            raise ValueError("Request timeout and lease margin must be positive")
-        if self.retry_base_seconds <= 0 or self.retry_max_seconds <= 0:
-            raise ValueError("Retry delays must be positive")
+        if self.retry_base_seconds > self.retry_max_seconds:
+            raise ValueError("RETRY_BASE_SECONDS must not exceed RETRY_MAX_SECONDS")
         if self.app_env != "development":
             for name, secret in (
                 ("API_KEY", self.api_key),
@@ -59,7 +58,7 @@ class Settings(BaseSettings):
 
     @property
     def request_lease_seconds(self) -> int:
-        return int(self.request_timeout_seconds + self.lease_margin_seconds)
+        return ceil(self.request_timeout_seconds + self.lease_margin_seconds)
 
 
 @lru_cache

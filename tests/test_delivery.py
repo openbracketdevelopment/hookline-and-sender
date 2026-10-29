@@ -1,3 +1,5 @@
+import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -95,7 +97,7 @@ def test_outgoing_request_signs_exact_persisted_bytes(monkeypatch):
     from backend.app.config import get_settings
     from backend.app.security import verify_request
 
-    original_client = httpx.Client
+    original_client = httpx.AsyncClient
     captured = {}
 
     def handle(request):
@@ -106,7 +108,7 @@ def test_outgoing_request_signs_exact_persisted_bytes(monkeypatch):
         captured["options"] = options
         return original_client(transport=httpx.MockTransport(handle), **options)
 
-    monkeypatch.setattr(delivery_service.httpx, "Client", make_client)
+    monkeypatch.setattr(delivery_service.httpx, "AsyncClient", make_client)
     claim = delivery_service.DeliveryClaim(
         delivery_id="delivery-stable",
         event_id="event-stable",
@@ -114,6 +116,7 @@ def test_outgoing_request_signs_exact_persisted_bytes(monkeypatch):
         attempt_number=1,
         claim_token="claim-token",
         request_body=b'{"fixed":"bytes"}',
+        request_deadline=time.monotonic() + 3,
     )
     assert delivery_service._send(claim) == (200, None)
 
@@ -130,6 +133,78 @@ def test_outgoing_request_signs_exact_persisted_bytes(monkeypatch):
         now=int(timestamp),
     )
     assert captured["options"]["follow_redirects"] is False
+    assert captured["options"]["trust_env"] is False
+
+
+def _mock_outbound(monkeypatch, handler):
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        delivery_service.httpx,
+        "AsyncClient",
+        lambda **options: original_client(
+            transport=httpx.MockTransport(handler), **options
+        ),
+    )
+
+
+def test_success_headers_do_not_require_response_body(db_session_factory, monkeypatch):
+    class StalledBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            raise AssertionError("Response body must never be read")
+            yield b""
+
+    _mock_outbound(
+        monkeypatch, lambda request: httpx.Response(200, stream=StalledBody())
+    )
+    delivery_id = _create_delivery(db_session_factory)
+    delivery_service.process_delivery(delivery_id)
+    with db_session_factory() as session:
+        assert session.get(Delivery, delivery_id).status == "succeeded"
+
+
+def test_total_request_deadline_cancels_stalled_request(
+    db_session_factory, monkeypatch
+):
+    from backend.app.config import Settings
+
+    settings = Settings(request_timeout_seconds=0.1)
+    monkeypatch.setattr(delivery_service, "get_settings", lambda: settings)
+    cancelled = False
+
+    async def stalled_headers(request):
+        nonlocal cancelled
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled = True
+        return httpx.Response(200)
+
+    _mock_outbound(monkeypatch, stalled_headers)
+    delivery_id = _create_delivery(db_session_factory)
+    started = time.monotonic()
+    delivery_service.process_delivery(delivery_id)
+    elapsed = time.monotonic() - started
+    assert cancelled
+    assert elapsed < 1
+    with db_session_factory() as session:
+        assert session.get(Delivery, delivery_id).status == "retry_scheduled"
+        assert session.query(DeliveryAttempt).one().outcome == "timeout"
+
+
+def test_expired_request_budget_does_not_send(db_session_factory, monkeypatch):
+    sent = []
+    _mock_outbound(
+        monkeypatch, lambda request: sent.append(request) or httpx.Response(200)
+    )
+    delivery_id = _create_delivery(db_session_factory)
+    claim = delivery_service.claim_delivery(delivery_id)
+    assert claim is not None
+    from dataclasses import replace
+
+    expired = replace(claim, request_deadline=time.monotonic() - 1)
+    with pytest.raises(httpx.TimeoutException):
+        delivery_service._send(expired)
+    assert sent == []
 
 
 def test_maximum_attempts_terminally_fails(db_session_factory, monkeypatch):
@@ -195,3 +270,21 @@ def test_retry_after_is_capped():
         assert delivery_service._retry_delay(1, 1000) == 10
     finally:
         delivery_service.get_settings = original
+
+
+@pytest.mark.parametrize(
+    ("header", "seconds"),
+    [
+        ("5", 5),
+        ("-1", 0),
+        ("NaN", None),
+        ("Infinity", None),
+        ("not-a-date", None),
+        ("1" * 129, None),
+        ("Thu, 01 Jan 2026 00:00:10 GMT", 10),
+        ("Wed, 31 Dec 2025 23:59:50 GMT", 0),
+    ],
+)
+def test_retry_after_parsing(header, seconds):
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    assert delivery_service._retry_after_seconds(header, now) == seconds

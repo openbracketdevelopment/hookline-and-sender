@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import UTC, datetime
 from typing import Annotated
@@ -6,7 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis import Redis
+from redis.backoff import NoBackoff
 from redis.exceptions import RedisError
+from redis.retry import Retry
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
@@ -27,6 +30,7 @@ from backend.app.schemas import (
 from backend.app.services.events import accept_event
 
 bearer = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 def require_api_key(
@@ -176,14 +180,21 @@ def live() -> dict[str, str]:
 def ready() -> dict[str, str]:
     from backend.app.database import engine
 
+    timeout = get_settings().dependency_timeout_seconds
     try:
         with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
+            connection.execute(text("SELECT id FROM deliveries LIMIT 0"))
         with Redis.from_url(
-            get_settings().redis_url, socket_connect_timeout=1
+            get_settings().redis_url,
+            socket_connect_timeout=timeout,
+            socket_timeout=timeout,
+            retry=Retry(NoBackoff(), 0),
         ) as client:
             client.ping()
     except (SQLAlchemyError, RedisError) as exc:
+        logger.warning(
+            "readiness dependency check failed", extra={"outcome": type(exc).__name__}
+        )
         raise HTTPException(
             status_code=503, detail="Required dependency unavailable"
         ) from exc

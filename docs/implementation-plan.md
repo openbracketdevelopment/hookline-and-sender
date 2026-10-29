@@ -34,7 +34,8 @@ product brief and README; they are not part of this implementation.
   timestamp and HMAC signature.
 - [ ] Retry classification, `Retry-After`, backoff, jitter, and five-attempt
   limit match the documented policy.
-- [ ] Receiver rejects invalid/old signatures, fails twice, succeeds, and
+- [ ] Receiver rejects invalid/old signatures, succeeds by default, optionally
+  fails twice in retry-simulation mode, and
   deduplicates already-processed deliveries.
 - [ ] Developer setup, reset, demo, troubleshooting, limitations, and roadmap
   are documented; CI checks formatting, lint, and tests.

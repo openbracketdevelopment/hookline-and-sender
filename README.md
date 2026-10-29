@@ -2,8 +2,8 @@
 
 A Python webhook relay that accepts producer events, persists delivery work,
 sends signed HTTP requests in a separate worker, and records each attempt. The
-local demo receiver fails twice before succeeding so the retry and history flow
-can be seen end to end.
+local demo receiver succeeds immediately by default. An optional failure
+simulation lets you see the retry and history flow end to end.
 
 ## What does that mean in plain English?
 
@@ -54,6 +54,15 @@ attempt history. Redis transports tasks; it is not the delivery-history store.
 The API commits an event and its one delivery before returning HTTP 202. A
 separate dispatcher scans PostgreSQL and can enqueue the same ID more than
 once; workers claim rows atomically and ignore active or terminal deliveries.
+
+The interactive API page at [localhost:8000/docs](http://localhost:8000/docs)
+includes a plain-English introduction beneath the title and instructions for
+submitting an event and checking its delivery history. The modern explorer has
+a light/dark toggle, follows your system theme initially, and remembers your
+theme choice in your browser. API keys are not persisted across reloads.
+Swagger UI assets are loaded from jsDelivr at the pinned version 5.34.0;
+loading the interactive explorer requires internet access. External schema
+validation is disabled; API requests go to this local service.
 
 ## Technology choices
 
@@ -230,25 +239,31 @@ uv run --locked --env-file .env python -m scripts.run_demo
 The command resets only the local receiver's in-memory demo state, submits a
 sample `content.published` event, polls until completion (45 seconds by
 default), prints each attempt, and exits nonzero if it does not succeed. Use
-`--timeout 60` to change the bound. A successful demonstration prints two HTTP
-503 attempts followed by HTTP 200.
+`--timeout 60` to change the bound. By default the receiver succeeds on its
+first attempt; ordinary delivery is not forced to fail.
 
 Expected output includes:
 
 ```text
-Attempt 1: retryable_http_error (HTTP 503)
-Attempt 2: retryable_http_error (HTTP 503)
-Attempt 3: succeeded (HTTP 200)
+Attempt 1: succeeded (HTTP 200)
 Demo completed successfully.
 ```
 
-**The first two failures are intentional.** They show the retry mechanism
-working. This script uses the API key from `.env`; there is nothing to paste
-into the terminal command.
+To deliberately test retry behavior, opt in:
+
+```sh
+uv run --locked --env-file .env python -m scripts.run_demo --simulate-retries
+```
+
+Only this mode makes the demo receiver return HTTP 503 twice, then HTTP 200.
+Both modes reset the receiver's shared in-memory state before submitting a
+fresh event; avoid running them simultaneously. The script uses the API key
+from `.env`; there is nothing to paste into the terminal command.
 
 ### Try the API in your browser
 
 1. Open [http://localhost:8000/docs](http://localhost:8000/docs).
+   Use the **Dark mode / Light mode** button in the header to change the theme.
 2. Click **Authorize**. Copy only the `API_KEY` value from your local `.env`,
    paste it into the value field (without `API_KEY=` or a `Bearer` prefix), and
    confirm.
@@ -339,9 +354,26 @@ does not solve SSRF.
 Statuses are `pending`, `in_progress`, `retry_scheduled`, `succeeded`, and
 `failed`. A worker takes a PostgreSQL row lock, creates an attempt, and writes a
 lease before making an HTTP request outside the transaction. The lease lasts
-the configured request timeout plus a recovery margin. After an expired lease,
-a later task records the stranded attempt as `worker_lost` and retries if the
-five-attempt limit has not been reached.
+the configured overall request budget plus a recovery margin, rounded up to
+whole seconds. `REQUEST_TIMEOUT_SECONDS` defaults to 3 seconds and covers the
+whole HTTP operation, not a separate allowance for each connection/read/write
+phase. Its deadline starts when the delivery is claimed, so time spent committing
+the claim reduces the remaining network budget. It uses a monotonic countdown
+that is not affected by wall-clock corrections. The worker cancels an overdue
+HTTP operation and checks for an expired budget before opening the HTTP client.
+Cancellation is not a guarantee against operating-system stalls or process
+pauses; lease recovery and receiver-side deduplication are still necessary.
+
+The worker checks status and headers without consuming the response body. A
+receiver that sends HTTP 200 and then stalls its body therefore does not cause
+a retry. Redirects and environment-configured HTTP proxies remain disabled.
+
+After an expired lease, a later task records the stranded attempt as
+`worker_lost` and retries if the five-attempt limit has not been reached.
+Claim tokens prevent a late result from an old worker from overwriting the
+newer attempt. These safeguards cannot eliminate duplicates after a process
+pause, crash, lost response, or receiver-side processing; receiver idempotency
+is still required.
 
 - Any 2xx is success.
 - Network errors, timeouts, 408, 429, and 5xx are retryable.
@@ -349,7 +381,8 @@ five-attempt limit has not been reached.
 - There are five total attempts, including the initial request.
 - Retry delay is exponential (default 1, 2, 4, 8 seconds), with up to 250 ms
   jitter and a configurable 30-second cap. Valid numeric or HTTP-date
-  `Retry-After` values are honored but capped to the same maximum.
+  `Retry-After` values are honored but capped to the same maximum. Invalid,
+  non-finite, or excessively long values are ignored.
 - Reaching the attempt limit records `failed`.
 
 PostgreSQL `next_attempt_at` is the authoritative retry schedule; Celery does
@@ -369,6 +402,24 @@ The API can still accept events while Redis is down, although readiness reports
 a request but its response is lost, the sender cannot know whether the side
 effect happened and may retry. Delivery is not exactly-once and eventual
 success is not guaranteed. Ordering is not guaranteed.
+
+### Dependency failures and configuration
+
+`DEPENDENCY_TIMEOUT_SECONDS` defaults to 3 (allowed range: 2-30). It limits
+PostgreSQL connection/pool waits, individual statements and lock waits, and
+Redis connection/read waits. These are per-operation limits, not a promise that
+an entire multi-step readiness check finishes within exactly three seconds.
+The dispatcher does not perform inline publish retries: a broker failure stops
+the current batch, logs a sanitized error, and leaves pending work for the next
+scan. Celery still reconnects its worker when the broker returns.
+
+Readiness checks require the delivery table to exist as well as a responding
+database and Redis. Liveness remains independent of those dependencies.
+
+Invalid timing, retry, and size settings fail at startup rather than allowing a
+busy loop or an unusable request limit. Retry base cannot exceed its cap.
+Settings may reduce, but not raise, the milestone's 256 KiB body limit,
+five-attempt maximum, or five-minute signature tolerance.
 
 ## Tests and checks
 
@@ -396,9 +447,12 @@ them against the separate `hookline_test` database initialized by Compose:
 docker compose --profile test run --build --rm integration-tests
 ```
 
-The integration test fixture clears only the application tables in the
-configured test database. Do not point `TEST_DATABASE_URL` at a database with
-data you need to preserve. PostgreSQL's one-time initialization creates
+Each PostgreSQL integration test creates a uniquely named temporary schema and
+removes that schema afterward, rather than clearing existing application tables.
+Still use a dedicated test database, not production credentials.
+The tests cover simultaneous submissions and claims, duplicate dispatcher
+messages, expired-worker recovery, stale results, and lost-response duplicates.
+PostgreSQL's one-time initialization creates
 `hookline_test` for new volumes; if your existing volume predates this setup,
 create it once with `docker compose exec db createdb -U hookline hookline_test`.
 CI runs formatting, lint, unit tests, migrations, and PostgreSQL integration
@@ -452,7 +506,9 @@ docker compose down --volumes
 
 This destructive reset is never part of normal startup. To reset only the
 receiver's in-memory demonstration state, run the demo command or send
-`POST /demo/reset` to `http://localhost:8081`.
+`POST /demo/reset` to `http://localhost:8081`. This also restores immediate
+success. `POST /demo/reset?failures=2` enables the optional two-failure mode
+until the next reset or receiver restart. These controls are development-only.
 
 ## Known limitations and roadmap
 

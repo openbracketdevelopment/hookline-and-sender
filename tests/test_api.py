@@ -25,6 +25,102 @@ def test_health_and_business_authentication(client):
     assert client.get("/api/v1/deliveries", headers=AUTH).status_code == 200
 
 
+def test_docs_description_explains_the_app(client):
+    schema = client.get("/openapi.json").json()
+    assert schema["info"]["title"] == "Hook, Line & Sender"
+    description = schema["info"]["description"]
+    assert "webhook delivery service" in description
+    assert "not connected yet" in description
+    assert "HTTP 202" in description
+
+
+def test_explorer_serves_local_shell_and_theme_assets(client):
+    page = client.get("/docs")
+    assert page.status_code == 200
+    assert 'id="theme-toggle"' in page.text
+    assert "5.34.0" in page.text
+    assert client.get("/explorer-assets/explorer.css").status_code == 200
+    script = client.get("/explorer-assets/explorer.js").text
+    assert "persistAuthorization: false" in script
+    assert "validatorUrl: null" in script
+    assert "hookline-theme" in script
+
+
+def test_ready_checks_schema_and_bounded_redis_ping(
+    client, db_session_factory, monkeypatch
+):
+    from backend.app import database
+    from backend.app.api import routes
+
+    captured = {}
+
+    class HealthyRedis:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def ping(self):
+            return True
+
+    def redis_client(url, **options):
+        captured.update(options)
+        return HealthyRedis()
+
+    monkeypatch.setattr(database, "engine", db_session_factory.kw["bind"])
+    monkeypatch.setattr(routes.Redis, "from_url", redis_client)
+    assert client.get("/health/ready").status_code == 200
+    assert captured["socket_timeout"] == get_settings().dependency_timeout_seconds
+    assert captured["socket_connect_timeout"] == captured["socket_timeout"]
+    assert captured["retry"].get_retries() == 0
+
+
+def test_ready_rejects_missing_database_schema(client, db_session_factory, monkeypatch):
+    from backend.app import database
+    from backend.app.models import Base
+
+    engine = db_session_factory.kw["bind"]
+    Base.metadata.drop_all(engine)
+    monkeypatch.setattr(database, "engine", engine)
+    assert client.get("/health/ready").status_code == 503
+
+
+def test_ready_rejects_stalled_redis(client, db_session_factory, monkeypatch):
+    from redis.exceptions import TimeoutError
+
+    from backend.app import database
+    from backend.app.api import routes
+
+    class StalledRedis:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def ping(self):
+            raise TimeoutError("Redis did not respond")
+
+    monkeypatch.setattr(database, "engine", db_session_factory.kw["bind"])
+    monkeypatch.setattr(
+        routes.Redis, "from_url", lambda *args, **kwargs: StalledRedis()
+    )
+    assert client.get("/health/ready").status_code == 503
+
+
+def test_publisher_has_bounded_socket_waits_and_no_inline_retries():
+    from backend.app.workers.celery_app import celery_app
+
+    options = celery_app.conf.broker_transport_options
+    assert (
+        options["socket_connect_timeout"] == get_settings().dependency_timeout_seconds
+    )
+    assert options["socket_timeout"] == options["socket_connect_timeout"]
+    assert options["retry_on_timeout"] is False
+    assert celery_app.conf.task_publish_retry is False
+
+
 def test_acceptance_duplicate_and_conflict(client, db_session_factory):
     first = client.post("/api/v1/events", json=EVENT, headers=AUTH)
     assert first.status_code == 202

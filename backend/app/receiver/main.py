@@ -2,7 +2,7 @@ import json
 import threading
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 
 from backend.app.config import get_settings
 from backend.app.security import verify_request
@@ -11,6 +11,7 @@ app = FastAPI(title="Hook, Line & Sender Demo Receiver")
 _lock = threading.Lock()
 _attempts: dict[str, int] = {}
 _processed: set[str] = set()
+_failures_before_success = 0
 
 
 def _controls_enabled() -> bool:
@@ -58,7 +59,7 @@ async def receive_webhook(
             return {"status": "success", "duplicate": True}
         attempt = _attempts.get(delivery_id, 0) + 1
         _attempts[delivery_id] = attempt
-        if attempt < 3:
+        if attempt <= _failures_before_success:
             raise HTTPException(
                 status_code=503,
                 detail=f"Simulated temporary failure on attempt {attempt}",
@@ -79,10 +80,14 @@ def demo_state() -> dict[str, object]:
 
 
 @app.post("/demo/reset")
-def reset_demo() -> dict[str, str]:
+def reset_demo(
+    failures: Annotated[int, Query(ge=0, le=2)] = 0,
+) -> dict[str, str]:
+    global _failures_before_success
     if not _controls_enabled():
         raise HTTPException(status_code=404, detail="Not found")
     with _lock:
         _attempts.clear()
         _processed.clear()
+        _failures_before_success = failures
     return {"status": "reset"}

@@ -1,10 +1,12 @@
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.routes import health_router, router
 from backend.app.config import get_settings
@@ -81,8 +83,32 @@ class EventBodyLimitMiddleware:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Hook, Line & Sender", version="0.1.0")
+    app = FastAPI(
+        title="Hook, Line & Sender",
+        version="0.1.0",
+        docs_url=None,
+        description=(
+            "A webhook delivery service: submit an event, save it safely in a "
+            "database, and let a separate worker send it to a configured app. "
+            "Temporary delivery failures are retried, and you can inspect the "
+            "status and history of every attempt.\n\n"
+            "The local receiver succeeds immediately by default; retry simulation "
+            "is optional. CMS integrations such as Craft CMS "
+            "and Payload are not connected yet.\n\n"
+            "**Getting started:** click **Authorize** and enter your API key, "
+            "then use **POST /api/v1/events** to submit an event and "
+            "**GET /api/v1/deliveries/{delivery_id}** to follow its progress. "
+            "Acceptance (HTTP 202) means the event was saved, not yet delivered. "
+            "Receivers must handle duplicate delivery IDs safely."
+        ),
+    )
     app.add_middleware(EventBodyLimitMiddleware)
+    assets = Path(__file__).parent / "static"
+    app.mount("/explorer-assets", StaticFiles(directory=assets), name="explorer-assets")
+
+    @app.get("/docs", include_in_schema=False)
+    def explorer() -> FileResponse:
+        return FileResponse(assets / "explorer.html")
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(

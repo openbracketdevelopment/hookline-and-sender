@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import math
 import random
 import time
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ class DeliveryClaim:
     attempt_number: int
     claim_token: str
     request_body: bytes
+    request_deadline: float
 
 
 def _utc(value: datetime) -> datetime:
@@ -36,7 +39,6 @@ def _utc(value: datetime) -> datetime:
 
 def claim_delivery(delivery_id: str) -> DeliveryClaim | None:
     settings = get_settings()
-    now = datetime.now(UTC)
     with SessionLocal.begin() as session:
         delivery = session.scalar(
             select(Delivery).where(Delivery.id == delivery_id).with_for_update()
@@ -44,6 +46,8 @@ def claim_delivery(delivery_id: str) -> DeliveryClaim | None:
         if delivery is None or delivery.status in TERMINAL_STATES:
             return None
 
+        now = datetime.now(UTC)
+        request_deadline = time.monotonic() + settings.request_timeout_seconds
         if delivery.status == "in_progress":
             if (
                 delivery.lease_expires_at is None
@@ -124,6 +128,7 @@ def claim_delivery(delivery_id: str) -> DeliveryClaim | None:
             attempt_number=number,
             claim_token=token,
             request_body=delivery.request_body.encode("utf-8"),
+            request_deadline=request_deadline,
         )
     return claim
 
@@ -131,8 +136,11 @@ def claim_delivery(delivery_id: str) -> DeliveryClaim | None:
 def _retry_after_seconds(value: str | None, now: datetime) -> float | None:
     if not value:
         return None
+    value = value.strip()
+    if len(value) > 128:
+        return None
     try:
-        return max(0.0, float(value))
+        seconds = float(value)
     except ValueError:
         try:
             parsed = parsedate_to_datetime(value)
@@ -141,6 +149,7 @@ def _retry_after_seconds(value: str | None, now: datetime) -> float | None:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
         return max(0.0, (parsed - now).total_seconds())
+    return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
 def _retry_delay(attempt_number: int, retry_after: float | None) -> float:
@@ -155,7 +164,14 @@ def _retry_delay(attempt_number: int, retry_after: float | None) -> float:
 
 
 def _send(claim: DeliveryClaim) -> tuple[int, str | None]:
+    return asyncio.run(_send_before_deadline(claim))
+
+
+async def _send_before_deadline(claim: DeliveryClaim) -> tuple[int, str | None]:
     settings = get_settings()
+    remaining = claim.request_deadline - time.monotonic()
+    if remaining <= 0:
+        raise httpx.TimeoutException("Delivery request deadline expired before sending")
     timestamp = str(int(time.time()))
     headers = {
         "Content-Type": "application/json",
@@ -174,18 +190,20 @@ def _send(claim: DeliveryClaim) -> tuple[int, str | None]:
         write=settings.request_timeout_seconds,
         pool=settings.request_timeout_seconds,
     )
-    with httpx.Client(
-        timeout=timeout, follow_redirects=False, trust_env=False
-    ) as client:
-        with client.stream(
-            "POST",
-            settings.demo_receiver_url,
-            content=claim.request_body,
-            headers=headers,
-        ) as response:
-            for _chunk in response.iter_bytes(chunk_size=1024):
-                break
-            return response.status_code, response.headers.get("Retry-After")
+    try:
+        async with asyncio.timeout(remaining):
+            async with httpx.AsyncClient(
+                timeout=timeout, follow_redirects=False, trust_env=False
+            ) as client:
+                async with client.stream(
+                    "POST",
+                    settings.demo_receiver_url,
+                    content=claim.request_body,
+                    headers=headers,
+                ) as response:
+                    return response.status_code, response.headers.get("Retry-After")
+    except TimeoutError as exc:
+        raise httpx.TimeoutException("Delivery request exceeded its deadline") from exc
 
 
 def _complete(
@@ -208,10 +226,18 @@ def _complete(
             or delivery.claim_token != claim.claim_token
             or delivery.status != "in_progress"
         ):
+            logger.warning(
+                "stale delivery completion ignored",
+                extra={
+                    "event_id": claim.event_id,
+                    "delivery_id": claim.delivery_id,
+                    "attempt_number": claim.attempt_number,
+                },
+            )
             return
         attempt = session.get(DeliveryAttempt, claim.attempt_id)
         if attempt is None:
-            return
+            raise RuntimeError("Claimed delivery attempt is missing")
         attempt.completed_at = now
         attempt.http_status = http_status
         attempt.duration_ms = duration_ms

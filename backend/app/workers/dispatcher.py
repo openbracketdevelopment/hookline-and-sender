@@ -53,7 +53,7 @@ def dispatch_due(limit: int = 100) -> int:
                 "delivery enqueue failed",
                 extra={"delivery_id": delivery_id, "outcome": type(exc).__name__},
             )
-            continue
+            break
 
         with SessionLocal.begin() as session:
             delivery = session.get(Delivery, delivery_id)

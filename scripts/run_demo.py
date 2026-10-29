@@ -10,6 +10,11 @@ import httpx
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the local delivery demo")
     parser.add_argument("--timeout", type=float, default=45.0)
+    parser.add_argument(
+        "--simulate-retries",
+        action="store_true",
+        help="Make the local receiver fail twice before succeeding",
+    )
     args = parser.parse_args()
     base_url = os.getenv("DEMO_API_URL", "http://127.0.0.1:8000").rstrip("/")
     api_key = os.getenv("API_KEY")
@@ -33,7 +38,10 @@ def main() -> int:
     }
 
     with httpx.Client(timeout=5.0) as client:
-        reset = client.post(f"{receiver_url}/demo/reset")
+        reset = client.post(
+            f"{receiver_url}/demo/reset",
+            params={"failures": 2 if args.simulate_retries else 0},
+        )
         reset.raise_for_status()
         accepted = client.post(
             f"{base_url}/api/v1/events", json=request_body, headers=headers
