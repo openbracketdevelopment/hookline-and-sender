@@ -1,0 +1,125 @@
+x-app-environment: &app-environment
+  APP_ENV: ${APP_ENV:-development}
+  API_KEY: ${API_KEY:?Set API_KEY in .env}
+  DEMO_SIGNING_SECRET: ${DEMO_SIGNING_SECRET:?Set DEMO_SIGNING_SECRET in .env}
+  DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+  REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+  DEMO_RECEIVER_URL: ${DEMO_RECEIVER_URL:-http://receiver:8080/webhooks}
+  ALLOW_INSECURE_DEMO_HTTP: ${ALLOW_INSECURE_DEMO_HTTP:-false}
+  MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-262144}
+  REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-3}
+  LEASE_MARGIN_SECONDS: ${LEASE_MARGIN_SECONDS:-10}
+  DISPATCHER_INTERVAL_SECONDS: ${DISPATCHER_INTERVAL_SECONDS:-2}
+  DISPATCH_COOLDOWN_SECONDS: ${DISPATCH_COOLDOWN_SECONDS:-5}
+  MAX_ATTEMPTS: ${MAX_ATTEMPTS:-5}
+  RETRY_BASE_SECONDS: ${RETRY_BASE_SECONDS:-1}
+  RETRY_MAX_SECONDS: ${RETRY_MAX_SECONDS:-30}
+  SIGNATURE_TOLERANCE_SECONDS: ${SIGNATURE_TOLERANCE_SECONDS:-300}
+
+services:
+  db:
+    image: postgres:17.11-alpine3.24
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hookline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-hookline}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4.12-alpine3.21
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment: *app-environment
+    command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    build: .
+    environment: *app-environment
+    command:
+      [
+        "celery",
+        "-A",
+        "backend.app.workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--concurrency=2",
+      ]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dispatcher:
+    build: .
+    environment: *app-environment
+    command: ["python", "-m", "backend.app.workers.dispatcher"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  receiver:
+    build: .
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEMO_SIGNING_SECRET: ${DEMO_SIGNING_SECRET:?Set DEMO_SIGNING_SECRET in .env}
+      SIGNATURE_TOLERANCE_SECONDS: ${SIGNATURE_TOLERANCE_SECONDS:-300}
+    command:
+      [
+        "uvicorn",
+        "backend.app.receiver.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+      ]
+    ports:
+      - "127.0.0.1:8081:8080"
+
+  integration-tests:
+    profiles: ["test"]
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "true"
+    environment:
+      <<: *app-environment
+      TEST_DATABASE_URL: ${TEST_DATABASE_URL:?Set TEST_DATABASE_URL in .env}
+    command: ["pytest", "-m", "postgres", "-q"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
