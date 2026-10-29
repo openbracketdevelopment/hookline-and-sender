@@ -1,171 +1,63 @@
 # Hook, Line & Sender
 
-A Python webhook relay that accepts producer events, persists delivery work,
-sends signed HTTP requests in a separate worker, and records each attempt. The
-local demo receiver succeeds immediately by default. An optional failure
-simulation lets you see the retry and history flow end to end.
+A Python service that receives webhooks, saves them, and delivers them to
+another application. It retries temporary failures and keeps a record of every
+delivery attempt.
 
-## What does that mean in plain English?
-
-A webhook is a message one app sends another when something happens. For
-example, a website's content editor might send "a page was published" so another
-app can update its cached pages.
-
-The receiving app might be temporarily offline. This project acts like a
-delivery service between the two apps:
-
-1. It accepts a message using a secret API key.
-2. It saves the message in a database before confirming acceptance.
-3. A separate worker tries to deliver it to the configured receiver.
-4. If the receiver has a temporary problem, the worker tries again, up to five
-   attempts total.
-5. You can inspect the delivery status and the result of each attempt.
-
-Outgoing messages include a cryptographic signature so the receiver can check
-that they came from this service and were not changed along the way.
-
-For now, this is a backend project: there is no dashboard or CMS connection.
-You interact with it through an interactive API page and a terminal demo.
-
-This is a portfolio and learning project, not a production-readiness or
-performance claim.
-
-**Start here:** [first-time setup](#local-setup), then [run the demo](#run-the-demo).
-The architecture and signature sections below explain the implementation in
-more detail; you do not need to understand them to run it.
-
-## Architecture
+A **webhook** is a message one application sends another when something
+happens, such as a page being published in a CMS.
 
 ```text
-Producer ──authenticated POST──► FastAPI ──transaction──► PostgreSQL
-                                    ▲                         │
-                                    │ reads                   │ pending rows
-                                    │                         ▼
-                                    └── Periodic dispatcher ─► Redis/Celery
-                                                                    │
-                                      signed HTTP POST ◄── Worker ◄──┘
-                                           │
-                                           ▼
-                                    Demo receiver
+Your CMS → Hook, Line & Sender → Your application
 ```
 
-PostgreSQL is authoritative for events, delivery state, retry scheduling, and
-attempt history. Redis transports tasks; it is not the delivery-history store.
-The API commits an event and its one delivery before returning HTTP 202. A
-separate dispatcher scans PostgreSQL and can enqueue the same ID more than
-once; workers claim rows atomically and ignore active or terminal deliveries.
+The relay saves each message before confirming receipt. Outgoing messages are
+signed so the receiving application can verify their origin and integrity.
 
-The interactive API page at [localhost:8000/docs](http://localhost:8000/docs)
-includes a plain-English introduction beneath the title and instructions for
-submitting an event and checking its delivery history. The modern explorer has
-a light/dark toggle, follows your system theme initially, and remembers your
-theme choice in your browser. API keys are not persisted across reloads.
-Swagger UI assets are loaded from jsDelivr at the pinned version 5.34.0;
-loading the interactive explorer requires internet access. External schema
-validation is disabled; API requests go to this local service.
+**Current scope:** a local learning and portfolio project with one configured
+demo receiver. CMS integrations, multiple destinations, and a delivery dashboard
+are not included yet. It is not production-ready.
 
-## Technology choices
+## Requirements
 
-| Component | Selected stable version |
-|---|---:|
-| Python | 3.12.16 |
-| FastAPI | 0.162.0 |
-| Pydantic | 2.14.1 |
-| SQLAlchemy | 2.1.6 |
-| Alembic | 1.20.1 |
-| Celery | 5.6.3 |
-| Redis Python client | 6.4.0 |
-| HTTPX | 0.28.1 |
-| psycopg | 3.3.6 |
-| pytest | 9.2.0 |
-| Ruff | 0.17.3 |
-| uv | 0.13.6 |
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — runs the
+  application and its supporting services. Open it before starting.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) — installs
+  Python and the project's dependencies.
+- **OpenSSL** — generates local secrets; available on most macOS development
+  setups.
 
-Dependency versions are exact-pinned in `pyproject.toml` and resolved in
-`uv.lock`. Celery's current Redis extra (through Kombu) requires
-`redis-py >=4.5.2,<6.5`; therefore the newest Redis client is not necessarily a
-compatible broker client. The tested choice is 6.4.0. SQLAlchemy 2.1 requires
-Python 3.11 or newer, so this project uses Python 3.12.
+Run all commands from the project folder in your terminal.
 
-The version choices were checked against the official [FastAPI tutorial](https://fastapi.tiangolo.com/tutorial/),
-[Pydantic documentation](https://docs.pydantic.dev/latest/),
-[SQLAlchemy 2.1 documentation](https://docs.sqlalchemy.org/en/21/),
-[Celery stable documentation](https://docs.celeryq.dev/en/stable/), and
-[uv project documentation](https://docs.astral.sh/uv/concepts/projects/sync/),
-as well as current package metadata on 2026-10-28. Compose uses versioned,
-non-`latest` images: Python 3.12.16, PostgreSQL 17.11, and Redis 7.4.12.
+## First-time setup
 
-## A quick Python orientation
-
-Type hints such as `delivery_id: str` make expected values easier to understand
-and check; Pydantic uses model annotations to validate incoming JSON at runtime.
-SQLAlchemy sessions are used with Python's `with` context manager to manage
-database resources. A `SessionLocal.begin()` block commits on success and rolls
-back on errors; a plain session context closes the session but still requires
-an explicit commit. A Celery task is a registered unit of background work. This
-project uses an explicit `Task` subclass so the editor recognizes task methods
-such as `apply_async`; the dispatcher queues delivery IDs for a separate worker.
-
-## Local setup
-
-Run all commands below in VS Code's terminal from the project folder (the folder
-containing this README). You do not need a separate terminal for each service.
-
-### 1. Check the tools
-
-- **Docker Desktop** runs the application's services in isolated containers.
-  Install it from [Docker's website](https://www.docker.com/products/docker-desktop/)
-  and open it. Wait until it reports that its engine is running.
-- **uv** installs Python and the project's Python packages. Follow its
-  [official installation instructions](https://docs.astral.sh/uv/getting-started/installation/)
-  if you do not already have it. uv can download the required Python version;
-  you do not need to install Python separately for this project.
-- **OpenSSL** generates random local passwords; it is available on most macOS
-  development setups.
-
-Check the commands are available:
-
-```sh
-uv --version
-docker compose version
-openssl version
-```
-
-If `uv` is not found after installation, open a new terminal and follow the
-installer's PATH instructions. PATH is the list of folders your terminal
-searches for commands.
-
-### 2. Install Python dependencies (the equivalent of `npm install`)
-
-From the repository root, run:
+### 1. Install dependencies
 
 ```sh
 uv sync --locked --all-groups
 ```
 
-`uv` installs the required Python version if necessary, creates `.venv`, and
-installs the locked application and development dependencies there. Think of
-`pyproject.toml` as `package.json`, `uv.lock` as `package-lock.json`, and `.venv`
-as the project's isolated Python interpreter plus installed packages (roughly
-the role of `node_modules`). Do not commit `.venv`.
+This is the Python equivalent of `npm install`. It installs the required Python
+version and packages in a local `.venv` folder.
+
+For reference:
+
+| Python | Similar role in Node.js |
+|---|---|
+| `pyproject.toml` | `package.json` |
+| `uv.lock` | `package-lock.json` |
+| `.venv` | Isolated Python environment and installed packages |
+| `uv run` | Runs a command using the project's environment |
 
 In VS Code, open the Command Palette, choose **Python: Select Interpreter**,
-and select `.venv/bin/python` in this repository. This lets Pylance find the
-same packages your commands use. Run project commands with `uv run --locked`;
-you do not need to activate the virtual environment manually.
+and select this project's `.venv/bin/python`. You do not need to activate the
+environment manually when using `uv run`.
 
-Docker installs its own dependencies inside each application image. The local
-`.venv` is for your editor, tests, and the demo script; the API, worker,
-dispatcher, receiver, PostgreSQL, and Redis run in Compose.
+### 2. Configure your environment
 
-### 3. Configure local secrets
+**Skip this step if your `.env` is already configured. Do not overwrite it.**
 
-The `.env` file holds settings for your machine. It is ignored by Git because
-it contains secrets. `.env.example` is the safe template, not the file you put
-real passwords in.
-
-**If your `.env` already contains generated secrets, skip this step. Do not copy
-the template over a configured file.** For a new checkout:
+For a new checkout, copy the template and generate three separate secrets:
 
 ```sh
 cp -n .env.example .env
@@ -174,360 +66,223 @@ openssl rand -hex 32
 openssl rand -hex 32
 ```
 
-Open `.env` in VS Code and paste the three different generated values:
+Open `.env` and use the generated values:
 
-| Setting | What to put there | What it is for |
-|---|---|---|
-| `API_KEY` | First generated value | Lets you submit events and read delivery history |
-| `DEMO_SIGNING_SECRET` | Second generated value | Lets the demo receiver verify outgoing messages |
-| `POSTGRES_PASSWORD` | Third generated value | Password for the local database |
+| Setting | Value |
+|---|---|
+| `API_KEY` | First secret: authorizes access to the API |
+| `DEMO_SIGNING_SECRET` | Second secret: signs outgoing messages |
+| `POSTGRES_PASSWORD` | Third secret: protects the local database |
 
-Replace the password between `hookline:` and `@db` in **both** `DATABASE_URL`
-and `TEST_DATABASE_URL` with the same third value. Keep the `db` hostname and the
-database names unchanged. The generated hexadecimal values do not need special
-URL escaping.
+Also replace the password between `hookline:` and `@db` in **both**
+`DATABASE_URL` and `TEST_DATABASE_URL` with the third secret. Keep the rest of
+each URL unchanged.
 
-Never share `.env` or commit it to Git. Changing `POSTGRES_PASSWORD` after the
-database has already been created does not automatically change the password
-stored in that database; see troubleshooting below.
+Keep `.env` private. It is ignored by Git and must not be committed.
 
-### 4. Start the application
+### 3. Start the services
 
 ```sh
 docker compose up --build -d
 ```
 
-This builds the application and starts six services: API, worker, dispatcher,
-demo receiver, PostgreSQL, and Redis. `-d` means they stay running without
-occupying your terminal. The first build may take a few minutes.
+This starts the API, delivery worker, dispatcher, demo receiver, PostgreSQL,
+and Redis. The first build may take a few minutes. The `-d` flag keeps them
+running without occupying your terminal.
 
-The API and receiver bind only to localhost (your own machine). PostgreSQL and
-Redis are accessible only within the Compose network. Database data stays in a
-persistent Docker volume when services are stopped.
-
-### 5. Create or update the database tables
+### 4. Set up the database
 
 ```sh
 docker compose run --rm api alembic -c backend/migrations/alembic.ini upgrade head
 ```
 
-A **migration** is a versioned database change, such as creating tables.
-This command applies any changes that have not been applied yet; it is safe to
-run again. Wait for it to finish successfully before submitting events.
+This applies **migrations**: versioned changes that create or update database
+tables. It is safe to run again.
 
-### 6. Check that the services are running
+### 5. Check the application
 
 ```sh
 docker compose ps
 curl -f http://localhost:8000/health/ready
 ```
 
-The readiness request should return HTTP 200 with `"status":"ready"`. If it
-fails immediately after startup, wait a few seconds and try again. If it keeps
-failing, see [logs and troubleshooting](#logs-and-troubleshooting).
-
-Now run the demonstration below.
+The readiness check should return `{"status":"ready"}`. If it fails just after
+startup, wait a few seconds and retry.
 
 ## Run the demo
 
-With the stack running and migrated, execute:
+With the services running, submit a sample event:
 
 ```sh
 uv run --locked --env-file .env python -m scripts.run_demo
 ```
 
-The command resets only the local receiver's in-memory demo state, submits a
-sample `content.published` event, polls until completion (45 seconds by
-default), prints each attempt, and exits nonzero if it does not succeed. Use
-`--timeout 60` to change the bound. By default the receiver succeeds on its
-first attempt; ordinary delivery is not forced to fail.
-
-Expected output includes:
+The script reads your API key from `.env`, submits the event, and displays the
+delivery result. Expected output includes:
 
 ```text
 Attempt 1: succeeded (HTTP 200)
 Demo completed successfully.
 ```
 
-To deliberately test retry behavior, opt in:
+To test recovery from temporary failures:
 
 ```sh
 uv run --locked --env-file .env python -m scripts.run_demo --simulate-retries
 ```
 
-Only this mode makes the demo receiver return HTTP 503 twice, then HTTP 200.
-Both modes reset the receiver's shared in-memory state before submitting a
-fresh event; avoid running them simultaneously. The script uses the API key
-from `.env`; there is nothing to paste into the terminal command.
+This optional mode makes the demo receiver fail twice before succeeding.
+Each demo run resets the receiver's shared in-memory state, so run one demo
+at a time. Normal demo runs succeed immediately.
 
-### Try the API in your browser
+## Explore the API
 
-1. Open [http://localhost:8000/docs](http://localhost:8000/docs).
-   Use the **Dark mode / Light mode** button in the header to change the theme.
-2. Click **Authorize**. Copy only the `API_KEY` value from your local `.env`,
-   paste it into the value field (without `API_KEY=` or a `Bearer` prefix), and
-   confirm.
-3. Expand **GET /api/v1/deliveries**, click **Try it out**, then **Execute**.
-   The response shows the deliveries created by your demo runs.
-4. Copy a delivery's `id` and use **GET /api/v1/deliveries/{delivery_id}** to
-   see its status and attempt history.
+Open **[localhost:8000/docs](http://localhost:8000/docs)**.
 
-### Start it again on another day
+1. Click **Authorize** and paste the `API_KEY` value from `.env`.
+   Do not include `API_KEY=` or a `Bearer` prefix.
+2. Expand **GET /api/v1/deliveries**.
+3. Click **Try it out**, then **Execute** to list deliveries.
+4. Copy a delivery's `id` into **GET /api/v1/deliveries/{delivery_id}** to
+   inspect its status and attempt history.
 
-Your dependencies, configuration, and database data are already saved:
+To submit your own event, use **POST /api/v1/events** with a body like this:
+
+```json
+{
+  "source": "cms-demo",
+  "source_event_id": "page-about-published-v1",
+  "type": "content.published",
+  "destination_id": "demo-receiver",
+  "data": {
+    "slug": "about"
+  }
+}
+```
+
+A successful submission returns HTTP `202` with an event ID, delivery ID, and
+status URL. This means the event was **saved for delivery**, not that it has
+already reached the receiver.
+
+The explorer supports light and dark themes and remembers your choice.
+Authorization is cleared on reload. Its Swagger UI assets load from a CDN,
+so the explorer requires internet access.
+
+## Everyday commands
+
+### Start again
+
+Your configuration and database data are preserved:
 
 ```sh
 docker compose up -d
-uv run --locked --env-file .env python -m scripts.run_demo
 ```
 
-After pulling code changes, run `uv sync --locked --all-groups`, start with
-`docker compose up --build -d`, and re-run the migration command above.
-
-## API example
+### Update after pulling code changes
 
 ```sh
-curl -i http://localhost:8000/api/v1/events \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source": "payload-demo",
-    "source_event_id": "publish-page-about-v1",
-    "type": "content.published",
-    "destination_id": "demo-receiver",
-    "data": {
-      "collection": "pages",
-      "document_id": "page_123",
-      "slug": "about"
-    }
-  }'
+uv sync --locked --all-groups
+docker compose up --build -d
+docker compose run --rm api alembic -c backend/migrations/alembic.ini upgrade head
 ```
 
-The response is HTTP 202 with `event_id`, `delivery_id`, and `status_url`. Query
-the status URL with the same bearer token to see chronological attempts. Other
-business routes (`GET /api/v1/events/{event_id}` and
-`GET /api/v1/deliveries?status=pending&limit=50&offset=0`) also require the API
-key. `/health/live` checks only process liveness; `/health/ready` returns 503 if
-PostgreSQL or Redis is unavailable.
-
-The incoming request body limit is 256 KiB and is enforced even when
-`Content-Length` is absent. Reuse the same `source_event_id` when retrying an
-ambiguous submission failure. The identity `(source, source_event_id,
-destination_id)` is unique. Equivalent validated content returns the original
-IDs; conflicting content returns HTTP 409.
-
-## Outgoing request and signature contract
-
-The trusted operator configuration defines the only destination,
-`demo-receiver`. An event can choose its ID but cannot supply a URL.
-
-The exact compact, deterministic UTF-8 request body is persisted when the
-delivery is created and reused for every attempt. Each POST includes:
-
-- `X-Hookline-Event-Id`: stable internal event UUID.
-- `X-Hookline-Delivery-Id`: stable delivery UUID and receiver idempotency key.
-- `X-Hookline-Timestamp`: Unix time in seconds, freshly generated per attempt.
-- `X-Hookline-Signature`: `sha256=` followed by a lowercase hexadecimal HMAC.
-
-To verify, compute HMAC-SHA256 with the destination secret over the ASCII
-timestamp, a literal period, and the exact raw HTTP body bytes:
-
-```text
-HMAC_SHA256(secret, timestamp + "." + exact_raw_request_body)
-```
-
-Compare the expected and supplied signatures in constant time. Reject
-timestamps more than five minutes from current time. The included receiver
-implements these checks. Fresh timestamps prevent stale requests but do not
-deduplicate them; use the stable delivery ID to make receiver side effects
-idempotent.
-
-The local Compose configuration explicitly permits HTTP only to its
-`receiver` service hostname. This is a local-development exception, not a
-recommendation for public destinations. Before supporting user-supplied URLs,
-the service needs SSRF protections, address validation at connection time,
-redirect restrictions, and outbound network controls. A URL syntax check alone
-does not solve SSRF.
-
-## Delivery semantics and retry policy
-
-Statuses are `pending`, `in_progress`, `retry_scheduled`, `succeeded`, and
-`failed`. A worker takes a PostgreSQL row lock, creates an attempt, and writes a
-lease before making an HTTP request outside the transaction. The lease lasts
-the configured overall request budget plus a recovery margin, rounded up to
-whole seconds. `REQUEST_TIMEOUT_SECONDS` defaults to 3 seconds and covers the
-whole HTTP operation, not a separate allowance for each connection/read/write
-phase. Its deadline starts when the delivery is claimed, so time spent committing
-the claim reduces the remaining network budget. It uses a monotonic countdown
-that is not affected by wall-clock corrections. The worker cancels an overdue
-HTTP operation and checks for an expired budget before opening the HTTP client.
-Cancellation is not a guarantee against operating-system stalls or process
-pauses; lease recovery and receiver-side deduplication are still necessary.
-
-The worker checks status and headers without consuming the response body. A
-receiver that sends HTTP 200 and then stalls its body therefore does not cause
-a retry. Redirects and environment-configured HTTP proxies remain disabled.
-
-After an expired lease, a later task records the stranded attempt as
-`worker_lost` and retries if the five-attempt limit has not been reached.
-Claim tokens prevent a late result from an old worker from overwriting the
-newer attempt. These safeguards cannot eliminate duplicates after a process
-pause, crash, lost response, or receiver-side processing; receiver idempotency
-is still required.
-
-- Any 2xx is success.
-- Network errors, timeouts, 408, 429, and 5xx are retryable.
-- Other 4xx responses and all 3xx responses are terminal.
-- There are five total attempts, including the initial request.
-- Retry delay is exponential (default 1, 2, 4, 8 seconds), with up to 250 ms
-  jitter and a configurable 30-second cap. Valid numeric or HTTP-date
-  `Retry-After` values are honored but capped to the same maximum. Invalid,
-  non-finite, or excessively long values are ignored.
-- Reaching the attempt limit records `failed`.
-
-PostgreSQL `next_attempt_at` is the authoritative retry schedule; Celery does
-not maintain a competing retry timer. If Redis is unavailable, the dispatcher
-logs the publish failure and leaves the committed row eligible for another
-scan. For a local resilience check, stop Redis, submit an event, start Redis
-again, and observe the delivery progress:
+### View logs
 
 ```sh
-docker compose stop redis
-# Submit an authenticated event while Redis is stopped.
-docker compose start redis
+docker compose logs -f api worker dispatcher receiver
 ```
 
-The API can still accept events while Redis is down, although readiness reports
-503 and delivery waits for the dispatcher to reconnect. If a receiver processes
-a request but its response is lost, the sender cannot know whether the side
-effect happened and may retry. Delivery is not exactly-once and eventual
-success is not guaranteed. Ordering is not guaranteed.
+Press **Ctrl+C** to stop following logs. The services keep running.
 
-### Dependency failures and configuration
+### Stop
 
-`DEPENDENCY_TIMEOUT_SECONDS` defaults to 3 (allowed range: 2-30). It limits
-PostgreSQL connection/pool waits, individual statements and lock waits, and
-Redis connection/read waits. These are per-operation limits, not a promise that
-an entire multi-step readiness check finishes within exactly three seconds.
-The dispatcher does not perform inline publish retries: a broker failure stops
-the current batch, logs a sanitized error, and leaves pending work for the next
-scan. Celery still reconnects its worker when the broker returns.
+```sh
+docker compose down
+```
 
-Readiness checks require the delivery table to exist as well as a responding
-database and Redis. Liveness remains independent of those dependencies.
+This preserves database data. Adding `--volumes` **permanently deletes local
+events and delivery history**; it is not part of normal startup.
 
-Invalid timing, retry, and size settings fail at startup rather than allowing a
-busy loop or an unusable request limit. Retry base cannot exceed its cap.
-Settings may reduce, but not raise, the milestone's 256 KiB body limit,
-five-attempt maximum, or five-minute signature tolerance.
+## Tests and code checks
 
-## Tests and checks
-
-The quick tests use mocked outgoing requests and do not require Docker:
+Run the quick tests without Docker:
 
 ```sh
 uv run --locked pytest -m "not postgres" -q
 ```
 
-`pytest` is the test runner. A passing result means the tested behavior matched
-expectations; `deselected` means the PostgreSQL-only tests were deliberately
-excluded, not that they failed.
+`deselected` means the database tests were intentionally skipped, not failed.
 
-Ruff checks code style and formatting (similar to ESLint and Prettier):
+Check formatting and code quality:
 
 ```sh
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 ```
 
-PostgreSQL uniqueness and locking tests use an actual PostgreSQL service. Run
-them against the separate `hookline_test` database initialized by Compose:
+With Docker running and `.env` configured, run the PostgreSQL tests:
 
 ```sh
 docker compose --profile test run --build --rm integration-tests
 ```
 
-Each PostgreSQL integration test creates a uniquely named temporary schema and
-removes that schema afterward, rather than clearing existing application tables.
-Still use a dedicated test database, not production credentials.
-The tests cover simultaneous submissions and claims, duplicate dispatcher
-messages, expired-worker recovery, stale results, and lost-response duplicates.
-PostgreSQL's one-time initialization creates
-`hookline_test` for new volumes; if your existing volume predates this setup,
-create it once with `docker compose exec db createdb -U hookline hookline_test`.
-CI runs formatting, lint, unit tests, migrations, and PostgreSQL integration
-tests separately.
-
-## Logs and troubleshooting
+These use the separate `hookline_test` database and temporary test schemas,
+not the application's tables. If an older Docker volume is missing that
+database, create it once:
 
 ```sh
-docker compose ps
-docker compose logs -f api worker dispatcher receiver
+docker compose exec db createdb -U hookline hookline_test
+```
+
+## Troubleshooting
+
+| Problem | What to check |
+|---|---|
+| `uv` is not found | Restart your terminal and follow uv's installation instructions for PATH. |
+| `No module named uv` | Use `uv sync` or `uv run`, not `python3 -m uv`. |
+| Docker cannot connect | Open Docker Desktop and wait for its engine to start. |
+| Port already in use | Check whether another application uses port 8000 or 8081. |
+| Readiness returns `503` | Apply migrations and check PostgreSQL and Redis with `docker compose ps`. |
+| A delivery stays pending | Check dispatcher, worker, and Redis logs. Saved events remain in PostgreSQL. |
+| Database login fails | Ensure both database URLs match `POSTGRES_PASSWORD` and use hostname `db`. |
+
+Changing `.env` does **not** change an existing database's password. If you
+changed it after setup, restore the working configuration or update the
+PostgreSQL role's password. Do not delete the database volume as a routine fix.
+
+For database or Redis logs:
+
+```sh
 docker compose logs -f db redis
 ```
 
-Logs are JSON and include available event IDs, delivery IDs, attempt numbers,
-statuses, and outcomes. Secrets and authorization headers are not logged.
+## Delivery behavior and limits
 
-- **`No module named uv`:** use `uv sync` and `uv run`, not `python3 -m uv`.
-  The activated project Python does not need uv installed inside it. If the
-  `uv` command is missing, fix PATH using the installation instructions above.
-- **Cannot connect to Docker:** open Docker Desktop and wait for its engine to
-  start, then retry `docker compose up --build -d`.
-- **Port already in use:** another app may be using port 8000 or 8081. Stop
-  that app before starting this stack.
-- **Database password authentication failed:** check that both database URLs
-  match `POSTGRES_PASSWORD`. If you changed the password after creating the
-  persistent database, its stored password is still the old one. Restore the
-  previous working configuration or deliberately update the PostgreSQL role's
-  password. Do not delete the volume unless you intend to erase local data.
-- If services fail to start, check `docker compose ps` and the relevant service
-  logs. Ensure the local secret values were replaced in `.env`.
-- If the API starts but readiness is 503, check PostgreSQL and Redis health.
-- If an event remains pending, check dispatcher and Redis logs; accepted work
-  remains persisted in PostgreSQL.
-- If migrations fail, confirm `DATABASE_URL` uses service hostname `db` from
-  inside Compose and that its password matches `POSTGRES_PASSWORD`.
-- The demo receiver keeps test counters in memory; restarting it resets those
-  counters. The demo command also resets them before a run.
+- **Durable acceptance:** PostgreSQL stores events before the API confirms
+  receipt. Redis queues work; it does not store delivery history.
+- **Retries:** up to five total attempts. Network errors, timeouts, HTTP `408`,
+  `429`, and `5xx` responses can retry. Any `2xx` succeeds; other responses
+  end the delivery. Redirects are not followed.
+- **Duplicate submissions:** reuse the same `source`, `source_event_id`, and
+  `destination_id` when retrying a submission. Matching content returns the
+  original IDs; changed content returns HTTP `409`.
+- **Receiver safety:** signed messages may still arrive more than once.
+  Receivers must use the stable delivery ID to avoid repeating side effects.
+  Exactly-once delivery, ordering, and eventual success are not guaranteed.
+- **Current limits:** one API key, one trusted destination, and a maximum
+  incoming request size of 256 KiB. Demo receiver state is kept in memory.
 
-Stop containers without deleting data:
+The local API and receiver are accessible only from your machine; PostgreSQL
+and Redis are internal to Docker. Public hosting and user-supplied destination
+URLs require additional security and operational work.
 
-```sh
-docker compose down
-```
+## Technical reference
 
-To explicitly erase the local PostgreSQL volume and all persisted local events
-and deliveries:
+Built with Python 3.12, FastAPI, PostgreSQL, SQLAlchemy, Celery, Redis, and HTTPX.
+Dependencies are pinned in [pyproject.toml](pyproject.toml) and [uv.lock](uv.lock).
 
-```sh
-docker compose down --volumes
-```
-
-This destructive reset is never part of normal startup. To reset only the
-receiver's in-memory demonstration state, run the demo command or send
-`POST /demo/reset` to `http://localhost:8081`. This also restores immediate
-success. `POST /demo/reset?failures=2` enables the optional two-failure mode
-until the next reset or receiver restart. These controls are development-only.
-
-## Known limitations and roadmap
-
-Milestone 1 uses one API key and one trusted configured destination, stores
-receiver demo state in memory, and has no dashboard, public destination
-registration, multitenancy, replay, fan-out, ordering, or cloud deployment.
-It is a local engineering demo and makes no production-readiness or performance
-claim.
-
-- **Milestone 2:** Payload CMS producer and Next.js App Router receiver
-  examples; verify signatures before content revalidation; use stable producer
-  event IDs; handle draft/published changes, CMS transaction boundaries, and
-  relay-acceptance failures explicitly; verify against the installed Payload
-  and Next.js versions.
-- **Milestone 3:** Next.js delivery-history dashboard with filters, attempt
-  details, and controlled manual replay. Keep the relay's administrative API
-  key server-side and out of browser code.
-- **Milestone 4:** Craft CMS integration example plus the additional operations
-  and security work needed before considering public hosting.
-
-Future arbitrary destinations require SSRF protections, address validation at
-connection time, redirect restrictions, and outbound network controls.
+- [Architecture](docs/architecture.md) — components, signatures, retry handling,
+  configuration, and security boundaries.
+- [Product brief](docs/product-brief.md) — project goals and scope.
+- [Implementation plan](docs/implementation-plan.md) — milestones and future
+  integration work.
